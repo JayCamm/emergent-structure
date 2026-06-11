@@ -127,13 +127,29 @@ def age_risk(pushed_at: str | None) -> float:
     return 0.45
 
 
+def fetch_readme(repo_full_name: str, repo: dict) -> str:
+    payload = github_request(f"/repos/{repo_full_name}/readme")
+    readme = decode_content(payload if isinstance(payload, dict) else None)
+    if readme:
+        return readme
+
+    # Some repos in early experiments were renamed or copied. Avoid accidentally
+    # reusing the previous repo's README by trying only explicit candidate paths.
+    branch = repo.get("default_branch") or "main"
+    for filename in ["README.md", "readme.md", "README.txt"]:
+        payload = github_request(f"/repos/{repo_full_name}/contents/{filename}?ref={branch}")
+        readme = decode_content(payload if isinstance(payload, dict) else None)
+        if readme:
+            return readme
+    return ""
+
+
 def repo_to_memory(repo_full_name: str, query: str) -> MemoryItem | None:
     repo = github_request(f"/repos/{repo_full_name}")
     if not isinstance(repo, dict) or "full_name" not in repo:
         return None
 
-    readme_payload = github_request(f"/repos/{repo_full_name}/readme")
-    readme = decode_content(readme_payload if isinstance(readme_payload, dict) else None)
+    readme = fetch_readme(repo_full_name, repo)
     readme_head = re.sub(r"\s+", " ", readme).strip()[:1600]
 
     text = (
@@ -246,6 +262,15 @@ def main() -> None:
         )
         print(f"  {scored.memory.text[:260]}...")
 
+    print_section("Allowed but not selected because of top-k limit")
+    if not report.not_selected:
+        print("None")
+    for scored in report.not_selected or []:
+        print(
+            f"- {scored.memory.id}: decision={scored.decision.value}, score={scored.score:.3f}, reasons={scored.reasons}"
+        )
+        print(f"  {scored.memory.text[:260]}...")
+
     print_section("Blocked memories that ordinary top-k would have used")
     if report.blocked_from_ordinary_top_k:
         for memory_id in report.blocked_from_ordinary_top_k:
@@ -256,6 +281,8 @@ def main() -> None:
     print_section("Quick interpretation")
     if report.blocked_from_ordinary_top_k:
         print("Persistence Gate prevented at least one relevance-only top-k item from influencing the result.")
+    elif report.not_selected:
+        print("Persistence Gate changed the top-k context budget, but did not hard-block an ordinary top-k item in this corpus.")
     else:
         print("Persistence Gate did not block any ordinary top-k items in this corpus. That can be good if the corpus is clean, or a sign we need a messier test set.")
 
