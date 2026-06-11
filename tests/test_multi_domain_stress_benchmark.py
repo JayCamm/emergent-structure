@@ -1,0 +1,20 @@
+from benchmarks.multi_domain_stress_benchmark import build_case, run_stress_case
+import random
+
+
+def test_stress_case_builder_returns_memories():
+    rng = random.Random(1)
+    name, query, memories = build_case(1, "software_policy", "stale_contradiction", rng)
+    assert "software_policy" in name
+    assert "current answer" in query
+    assert len(memories) >= 5
+    assert any(memory.metadata.get("label_stale") for memory in memories)
+
+
+def test_stress_case_can_run():
+    rng = random.Random(1)
+    name, query, memories = build_case(1, "enterprise_policy", "risky_workaround", rng)
+    summary = run_stress_case(name, query, memories, top_k=4)
+    assert summary.case_id == name
+    assert summary.utility_gain is not None
+    assert summary.pass_fail in {"PASS", "WEAK"}
