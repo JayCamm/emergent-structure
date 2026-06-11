@@ -6,7 +6,7 @@ from persistence_memory.chroma_adapter import build_chroma_collection, ChromaRet
 from persistence_memory.adapters import PersistenceGateRetrieverAdapter
 from persistence_memory.llm_eval import (
     build_rag_prompt,
-    call_openai_chat,
+    call_llm_provider,
     compare_responses,
     deterministic_llm_stand_in,
     response_to_dict,
@@ -69,23 +69,23 @@ def main() -> None:
     ordinary_prompt = build_rag_prompt(query, ordinary_context)
     gated_prompt = build_rag_prompt(query, gated.allowed_context)
 
-    use_live_llm = bool(os.getenv("OPENAI_API_KEY"))
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    provider = os.getenv("LLM_PROVIDER", "openai" if os.getenv("OPENAI_API_KEY") else "gemini" if (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")) else "offline")
+    model = os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL") or os.getenv("GEMINI_MODEL")
 
-    if use_live_llm:
+    if provider.lower() in {"offline", "deterministic"}:
+        ordinary_response, gated_response = _offline_responses(ordinary_prompt, gated_prompt)
+        mode = "offline deterministic stand-in; set LLM_PROVIDER=gemini/openai and provider API key for live comparison"
+    else:
         try:
-            ordinary_response = call_openai_chat(ordinary_prompt, model=model)
-            gated_response = call_openai_chat(gated_prompt, model=model)
-            mode = f"live OpenAI model={model}"
+            ordinary_response = call_llm_provider(ordinary_prompt, provider=provider, model=model)
+            gated_response = call_llm_provider(gated_prompt, provider=provider, model=model)
+            mode = f"live {provider} model={model or 'provider-default'}"
         except Exception as exc:  # pragma: no cover - depends on live provider/account state
             ordinary_response, gated_response = _offline_responses(ordinary_prompt, gated_prompt)
             mode = (
-                "live LLM unavailable; fell back to offline deterministic stand-in "
+                f"live {provider} unavailable; fell back to offline deterministic stand-in "
                 f"({type(exc).__name__}: {exc})"
             )
-    else:
-        ordinary_response, gated_response = _offline_responses(ordinary_prompt, gated_prompt)
-        mode = "offline deterministic stand-in; set OPENAI_API_KEY for live LLM comparison"
 
     comparison = compare_responses(ordinary_response, gated_response)
 
