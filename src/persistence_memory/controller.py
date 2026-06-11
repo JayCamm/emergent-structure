@@ -60,6 +60,11 @@ class MemoryController:
 
     def evaluate_candidates(self, candidates: list[MemoryItem], task: TaskContext, top_k: int = 6) -> GateReport:
         """Score every candidate and return allowed, blocked, and ordinary baseline items."""
+        # Capture the ordinary baseline before gating mutates any states.
+        # Otherwise a memory quarantined by the gate disappears from the baseline,
+        # which hides the exact thing we want to measure.
+        ordinary = self.ordinary_top_k(candidates, top_k=top_k)
+
         scored = [self.scorer.score(candidate, task) for candidate in candidates if candidate.state != MemoryState.DELETED]
         scored.sort(key=lambda s: s.score, reverse=True)
 
@@ -75,7 +80,6 @@ class MemoryController:
                     item.memory.state = MemoryState.QUARANTINED
                     self.store.update(item.memory)
 
-        ordinary = self.ordinary_top_k(candidates, top_k=top_k)
         return GateReport(allowed=allowed, blocked=blocked, ordinary_top_k=ordinary)
 
     def gate_candidates(self, candidates: list[MemoryItem], task: TaskContext, top_k: int = 6) -> list[ScoredMemory]:
