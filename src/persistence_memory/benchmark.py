@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .controller import GateReport, MemoryController
+from .labeling import label_memory
 from .models import MemoryItem, TaskContext
 from .retriever import rank_by_relevance
 from .store import InMemoryStore
@@ -14,13 +15,22 @@ class StrategyMetrics:
     helpful_selected: int = 0
     risky_selected: int = 0
     stale_selected: int = 0
+    uncertain_selected: int = 0
     burden: float = 0.0
 
-    def net_utility(self, helpful_weight: float = 1.0, risk_weight: float = 1.0, stale_weight: float = 0.7, burden_weight: float = 0.25) -> float:
+    def net_utility(
+        self,
+        helpful_weight: float = 1.0,
+        risk_weight: float = 1.0,
+        stale_weight: float = 0.7,
+        uncertainty_weight: float = 0.15,
+        burden_weight: float = 0.25,
+    ) -> float:
         return (
             helpful_weight * self.helpful_selected
             - risk_weight * self.risky_selected
             - stale_weight * self.stale_selected
+            - uncertainty_weight * self.uncertain_selected
             - burden_weight * self.burden
         )
 
@@ -43,17 +53,25 @@ class BenchmarkResult:
     def stale_items_prevented(self) -> int:
         return self.ordinary.stale_selected - self.gated.stale_selected
 
+    @property
+    def helpful_items_lost(self) -> int:
+        return self.ordinary.helpful_selected - self.gated.helpful_selected
+
 
 def item_is_helpful(item: MemoryItem) -> bool:
-    return bool(item.metadata.get("label_helpful")) or item.usefulness_score >= 0.45
+    return label_memory(item).helpful
 
 
 def item_is_risky(item: MemoryItem) -> bool:
-    return bool(item.metadata.get("label_risky")) or item.risk >= 0.45 or item.harm_score >= 0.35
+    return label_memory(item).risky
 
 
 def item_is_stale(item: MemoryItem) -> bool:
-    return bool(item.metadata.get("label_stale")) or item.metadata.get("age_bucket") == "old" or item.metadata.get("kind") == "old_commit"
+    return label_memory(item).stale
+
+
+def item_is_uncertain(item: MemoryItem) -> bool:
+    return label_memory(item).uncertain
 
 
 def compute_metrics(items: list[MemoryItem]) -> StrategyMetrics:
@@ -62,6 +80,7 @@ def compute_metrics(items: list[MemoryItem]) -> StrategyMetrics:
         helpful_selected=sum(1 for item in items if item_is_helpful(item)),
         risky_selected=sum(1 for item in items if item_is_risky(item)),
         stale_selected=sum(1 for item in items if item_is_stale(item)),
+        uncertain_selected=sum(1 for item in items if item_is_uncertain(item)),
         burden=sum(item.burden for item in items),
     )
 
