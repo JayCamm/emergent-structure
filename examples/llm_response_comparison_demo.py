@@ -45,6 +45,10 @@ DOCUMENTS = [
 ]
 
 
+def _offline_responses(ordinary_prompt: str, gated_prompt: str) -> tuple[str, str]:
+    return deterministic_llm_stand_in(ordinary_prompt), deterministic_llm_stand_in(gated_prompt)
+
+
 def main() -> None:
     query = "How should we handle the current payment service failure?"
 
@@ -69,12 +73,18 @@ def main() -> None:
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
     if use_live_llm:
-        ordinary_response = call_openai_chat(ordinary_prompt, model=model)
-        gated_response = call_openai_chat(gated_prompt, model=model)
-        mode = f"live OpenAI model={model}"
+        try:
+            ordinary_response = call_openai_chat(ordinary_prompt, model=model)
+            gated_response = call_openai_chat(gated_prompt, model=model)
+            mode = f"live OpenAI model={model}"
+        except Exception as exc:  # pragma: no cover - depends on live provider/account state
+            ordinary_response, gated_response = _offline_responses(ordinary_prompt, gated_prompt)
+            mode = (
+                "live LLM unavailable; fell back to offline deterministic stand-in "
+                f"({type(exc).__name__}: {exc})"
+            )
     else:
-        ordinary_response = deterministic_llm_stand_in(ordinary_prompt)
-        gated_response = deterministic_llm_stand_in(gated_prompt)
+        ordinary_response, gated_response = _offline_responses(ordinary_prompt, gated_prompt)
         mode = "offline deterministic stand-in; set OPENAI_API_KEY for live LLM comparison"
 
     comparison = compare_responses(ordinary_response, gated_response)
