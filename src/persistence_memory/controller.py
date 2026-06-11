@@ -1,10 +1,42 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from time import time
 
 from .models import FeedbackEvent, GateDecision, MemoryItem, MemoryState, ScoredMemory, TaskContext
 from .scorer import PersistenceScorer
 from .store import InMemoryStore
+
+
+@dataclass
+class GateReport:
+    """Full result of a persistence-gating pass.
+
+    `allowed` is what downstream software may use.
+    `blocked` is everything rejected, quarantined, ignored, or marked refresh-required.
+    `ordinary_top_k` is the baseline: what a naive relevance-only retriever would have used.
+    """
+
+    allowed: list[ScoredMemory]
+    blocked: list[ScoredMemory]
+    ordinary_top_k: list[MemoryItem]
+
+    @property
+    def allowed_ids(self) -> list[str]:
+        return [item.memory.id for item in self.allowed]
+
+    @property
+    def blocked_ids(self) -> list[str]:
+        return [item.memory.id for item in self.blocked]
+
+    @property
+    def ordinary_top_k_ids(self) -> list[str]:
+        return [item.id for item in self.ordinary_top_k]
+
+    @property
+    def blocked_from_ordinary_top_k(self) -> list[str]:
+        ordinary = set(self.ordinary_top_k_ids)
+        return [item.memory.id for item in self.blocked if item.memory.id in ordinary]
 
 
 class MemoryController:
@@ -21,25 +53,42 @@ class MemoryController:
     def ingest(self, item: MemoryItem) -> None:
         self.store.add(item)
 
-    def gate_candidates(self, candidates: list[MemoryItem], task: TaskContext, top_k: int = 6) -> list[ScoredMemory]:
-        scored = [self.scorer.score(candidate, task) for candidate in candidates]
+    def ordinary_top_k(self, candidates: list[MemoryItem], top_k: int = 6) -> list[MemoryItem]:
+        """Naive baseline: use the most relevant active memories without persistence gating."""
+        active = [item for item in candidates if item.is_active()]
+        return sorted(active, key=lambda item: item.relevance, reverse=True)[:top_k]
+
+    def evaluate_candidates(self, candidates: list[MemoryItem], task: TaskContext, top_k: int = 6) -> GateReport:
+        """Score every candidate and return allowed, blocked, and ordinary baseline items."""
+        scored = [self.scorer.score(candidate, task) for candidate in candidates if candidate.state != MemoryState.DELETED]
         scored.sort(key=lambda s: s.score, reverse=True)
 
         allowed: list[ScoredMemory] = []
+        blocked: list[ScoredMemory] = []
+
         for item in scored:
-            if item.decision in {GateDecision.ALLOW, GateDecision.ALLOW_WITH_WARNING}:
+            if item.decision in {GateDecision.ALLOW, GateDecision.ALLOW_WITH_WARNING} and len(allowed) < top_k:
                 allowed.append(item)
-            elif item.decision == GateDecision.QUARANTINE:
-                item.memory.state = MemoryState.QUARANTINED
-                self.store.update(item.memory)
-            if len(allowed) >= top_k:
-                break
-        return allowed
+            else:
+                blocked.append(item)
+                if item.decision == GateDecision.QUARANTINE:
+                    item.memory.state = MemoryState.QUARANTINED
+                    self.store.update(item.memory)
+
+        ordinary = self.ordinary_top_k(candidates, top_k=top_k)
+        return GateReport(allowed=allowed, blocked=blocked, ordinary_top_k=ordinary)
+
+    def gate_candidates(self, candidates: list[MemoryItem], task: TaskContext, top_k: int = 6) -> list[ScoredMemory]:
+        return self.evaluate_candidates(candidates, task, top_k=top_k).allowed
 
     def retrieve_and_gate(self, task: TaskContext, candidates: list[MemoryItem] | None = None, top_k: int = 6) -> list[ScoredMemory]:
         # Prototype fallback: use active store items as candidates.
         candidates = candidates if candidates is not None else self.store.active()
         return self.gate_candidates(candidates, task, top_k=top_k)
+
+    def retrieve_report(self, task: TaskContext, candidates: list[MemoryItem] | None = None, top_k: int = 6) -> GateReport:
+        candidates = candidates if candidates is not None else self.store.all()
+        return self.evaluate_candidates(candidates, task, top_k=top_k)
 
     def allowed_context(self, scored: list[ScoredMemory]) -> str:
         return "\n\n".join(item.memory.text for item in scored if item.decision in {GateDecision.ALLOW, GateDecision.ALLOW_WITH_WARNING})
