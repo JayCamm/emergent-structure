@@ -1,5 +1,8 @@
+import pytest
+
 from persistence_memory.llm_eval import (
     build_rag_prompt,
+    call_llm_provider,
     compare_responses,
     deterministic_llm_stand_in,
     summarize_response,
@@ -32,3 +35,16 @@ def test_deterministic_llm_stand_in_changes_with_gated_context():
     )
     assert "emergency bypass" in deterministic_llm_stand_in(ordinary_prompt)
     assert "Do not disable safeguards" in deterministic_llm_stand_in(gated_prompt)
+
+
+def test_call_llm_provider_supports_offline_mode():
+    response = call_llm_provider(
+        "Current runbook: do not disable safeguards. Use the validated recovery path.",
+        provider="offline",
+    )
+    assert "Do not disable safeguards" in response
+
+
+def test_call_llm_provider_rejects_unknown_provider():
+    with pytest.raises(ValueError):
+        call_llm_provider("hello", provider="unknown")
