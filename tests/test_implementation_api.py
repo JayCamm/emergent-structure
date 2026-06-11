@@ -29,7 +29,7 @@ def test_filter_accepts_dict_items_and_blocks_risky_item():
     assert "risky_old" in result.blocked_ids
     assert result.profile == "balanced"
     assert result.audit_log
-    assert "safe_new" in result.allowed_context
+    assert "Current runbook" in result.allowed_context
 
 
 def test_filter_accepts_memory_items():
