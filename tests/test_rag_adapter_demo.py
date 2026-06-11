@@ -20,11 +20,14 @@ def test_rag_demo_blocks_old_workaround_and_changes_context():
     assert "do not disable safeguards" in result.allowed_context
 
 
-def test_deterministic_answer_prefers_gated_safe_context():
+def test_deterministic_answer_shows_contamination_then_safe_gated_answer():
     query = "How should we handle the current payment service failure?"
     retrieved = fake_retriever(query)
+    ordinary_context = "\n\n".join(item["text"] for item in retrieved)
+    ordinary_answer = deterministic_answer(ordinary_context)
+    assert "CONTEXT CONTAMINATED" in ordinary_answer
+
     gate = PersistenceGate(profile="balanced", top_k=4)
     result = gate.filter(query, retrieved)
-
-    answer = deterministic_answer(result.allowed_context)
-    assert "Do not disable safeguards" in answer
+    gated_answer = deterministic_answer(result.allowed_context)
+    assert "Do not disable safeguards" in gated_answer
