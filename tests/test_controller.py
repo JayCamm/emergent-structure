@@ -19,7 +19,7 @@ def test_controller_allows_validated_and_quarantines_harmful():
         id="bad",
         text="Relevant but harmful stale memory.",
         context_scope="project",
-        relevance=0.95,
+        relevance=0.96,
         confidence=0.4,
         importance=0.8,
         burden=0.4,
@@ -30,11 +30,13 @@ def test_controller_allows_validated_and_quarantines_harmful():
 
     controller = MemoryController(InMemoryStore([good, bad]))
     task = TaskContext(query="project", context_scope="project", need=0.8, risk_tolerance=0.5)
-    scored = controller.retrieve_and_gate(task, top_k=3)
+    report = controller.retrieve_report(task, top_k=3)
 
-    ids = [item.memory.id for item in scored]
-    assert "good" in ids
-    assert "bad" not in ids
+    assert "good" in report.allowed_ids
+    assert "bad" not in report.allowed_ids
+    assert "bad" in report.blocked_ids
+    assert "bad" in report.ordinary_top_k_ids
+    assert "bad" in report.blocked_from_ordinary_top_k
     assert controller.store.get("bad").state == MemoryState.QUARANTINED
 
 
