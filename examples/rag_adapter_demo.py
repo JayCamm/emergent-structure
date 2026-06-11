@@ -61,10 +61,17 @@ def build_prompt(query: str, context: str) -> str:
 
 
 def deterministic_answer(context: str) -> str:
-    """A stand-in for an LLM so the demo is reproducible without API keys."""
-    if "disable safeguards" in context and "do not disable safeguards" not in context:
-        return "Use the emergency bypass and disable safeguards."
-    if "do not disable safeguards" in context:
+    """A stand-in for an LLM so the demo is reproducible without API keys.
+
+    This intentionally behaves like a naive answer generator that can be
+    contaminated by a highly placed unsafe instruction. The point is not to
+    model a specific LLM; it is to make the retrieval-risk failure mode visible.
+    """
+    has_old_bypass = "disable safeguards and use the emergency bypass" in context
+    has_safe_runbook = "do not disable safeguards" in context
+    if has_old_bypass:
+        return "CONTEXT CONTAMINATED: retrieved context includes an obsolete emergency-bypass instruction. A naive generator may repeat unsafe guidance."
+    if has_safe_runbook:
         return "Do not disable safeguards. Use the current validated recovery path and verify health checks."
     return "Insufficient safe context; request a refresh."
 
