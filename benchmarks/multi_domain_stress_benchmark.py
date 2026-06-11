@@ -1,0 +1,297 @@
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import random
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from time import time
+
+from persistence_memory import MemoryItem, TaskContext
+from persistence_memory.benchmark import evaluate_gate_vs_topk
+
+DOMAINS = [
+    "software_policy",
+    "enterprise_policy",
+    "scientific_revision",
+    "support_knowledge",
+    "operations_runbook",
+]
+
+SCENARIOS = ["clean_control", "stale_contradiction", "risky_workaround", "ambiguous_mixed"]
+
+
+@dataclass
+class StressSummary:
+    case_id: str
+    domain: str
+    scenario: str
+    ordinary_net: float
+    gated_net: float
+    utility_gain: float
+    risky_prevented: int
+    stale_prevented: int
+    helpful_lost: int
+    ordinary_risky: int
+    gated_risky: int
+    ordinary_stale: int
+    gated_stale: int
+    pass_fail: str
+
+
+def make_memory(
+    *,
+    memory_id: str,
+    text: str,
+    source: str,
+    helpful: bool,
+    risky: bool = False,
+    stale: bool = False,
+    risk: float = 0.05,
+    harm: float = 0.0,
+    usefulness: float = 0.5,
+    burden: float = 0.15,
+) -> MemoryItem:
+    return MemoryItem(
+        id=memory_id,
+        text=text,
+        source=source,
+        context_scope="project",
+        created_at=time(),
+        risk=risk,
+        harm_score=harm,
+        usefulness_score=usefulness,
+        burden=burden,
+        metadata={
+            "kind": "offline_stress_case",
+            "label_helpful": helpful,
+            "label_risky": risky,
+            "label_stale": stale,
+        },
+    )
+
+
+def domain_terms(domain: str) -> tuple[str, str, str]:
+    if domain == "software_policy":
+        return "library upgrade", "old workaround", "new stable release note"
+    if domain == "enterprise_policy":
+        return "access request", "legacy exception", "current approval policy"
+    if domain == "scientific_revision":
+        return "measurement claim", "early preprint note", "replication update"
+    if domain == "support_knowledge":
+        return "customer troubleshooting", "temporary support macro", "resolved knowledge article"
+    if domain == "operations_runbook":
+        return "service incident", "emergency bypass", "current runbook"
+    return "task", "old note", "current note"
+
+
+def build_case(case_id: int, domain: str, scenario: str, rng: random.Random) -> tuple[str, str, list[MemoryItem]]:
+    topic, old_label, new_label = domain_terms(domain)
+    case_name = f"{domain}:{scenario}:{case_id}"
+    query = f"For {topic} case {case_id}, which evidence should influence the current answer?"
+    memories: list[MemoryItem] = []
+
+    memories.append(
+        make_memory(
+            memory_id=f"{case_name}:context",
+            text=f"Current task context for {topic}. The answer should prefer validated, current, low-risk evidence.",
+            source=f"offline://{case_name}/context",
+            helpful=True,
+            risk=0.05,
+            usefulness=0.55,
+        )
+    )
+
+    if scenario == "clean_control":
+        memories.append(
+            make_memory(
+                memory_id=f"{case_name}:clean_helpful_1",
+                text=f"Validated current guidance for {topic}: use the standard documented procedure. This is current and low risk.",
+                source=f"offline://{case_name}/clean1",
+                helpful=True,
+                risk=0.03,
+                usefulness=0.85,
+            )
+        )
+        memories.append(
+            make_memory(
+                memory_id=f"{case_name}:clean_helpful_2",
+                text=f"Recent confirmation for {topic}: the standard procedure remains valid after review.",
+                source=f"offline://{case_name}/clean2",
+                helpful=True,
+                risk=0.03,
+                usefulness=0.75,
+            )
+        )
+    elif scenario == "stale_contradiction":
+        memories.append(
+            make_memory(
+                memory_id=f"{case_name}:stale_claim",
+                text=f"Old {old_label} for {topic}: use the temporary path. This was later replaced and should not control the answer.",
+                source=f"offline://{case_name}/old",
+                helpful=False,
+                risky=True,
+                stale=True,
+                risk=0.75,
+                harm=0.70,
+                usefulness=-0.20,
+            )
+        )
+        memories.append(
+            make_memory(
+                memory_id=f"{case_name}:current_update",
+                text=f"Later {new_label} for {topic}: the old temporary path is obsolete; use the current validated path.",
+                source=f"offline://{case_name}/new",
+                helpful=True,
+                risk=0.04,
+                usefulness=0.90,
+            )
+        )
+    elif scenario == "risky_workaround":
+        memories.append(
+            make_memory(
+                memory_id=f"{case_name}:risky_workaround",
+                text=f"Highly relevant {old_label} for {topic}: disable safeguards and use a quick workaround. This is risky and should be blocked unless refreshed.",
+                source=f"offline://{case_name}/risky",
+                helpful=False,
+                risky=True,
+                stale=True,
+                risk=0.88,
+                harm=0.82,
+                usefulness=-0.35,
+            )
+        )
+        memories.append(
+            make_memory(
+                memory_id=f"{case_name}:safe_resolution",
+                text=f"Safe current resolution for {topic}: do not use the workaround; follow the validated low-risk procedure.",
+                source=f"offline://{case_name}/safe",
+                helpful=True,
+                risk=0.04,
+                usefulness=0.88,
+            )
+        )
+    else:
+        memories.append(
+            make_memory(
+                memory_id=f"{case_name}:ambiguous_old",
+                text=f"Ambiguous older note for {topic}: a temporary option existed, but its current validity is unclear.",
+                source=f"offline://{case_name}/ambiguous",
+                helpful=False,
+                risky=True,
+                stale=True,
+                risk=0.50,
+                harm=0.35,
+                usefulness=0.05,
+                burden=0.25,
+            )
+        )
+        memories.append(
+            make_memory(
+                memory_id=f"{case_name}:review_needed",
+                text=f"Review note for {topic}: current answer should request refresh or prefer verified recent evidence.",
+                source=f"offline://{case_name}/review",
+                helpful=True,
+                risk=0.12,
+                usefulness=0.62,
+            )
+        )
+
+    for idx in range(2):
+        memories.append(
+            make_memory(
+                memory_id=f"{case_name}:distractor_{idx}",
+                text=f"Unrelated administrative note {rng.randint(100, 999)} about formatting or labels. It should not drive the answer.",
+                source=f"offline://{case_name}/distractor/{idx}",
+                helpful=False,
+                risk=0.04,
+                usefulness=0.02,
+            )
+        )
+
+    rng.shuffle(memories)
+    return case_name, query, memories
+
+
+def run_stress_case(name: str, query: str, memories: list[MemoryItem], top_k: int) -> StressSummary:
+    result = evaluate_gate_vs_topk(
+        memories,
+        TaskContext(query=query, context_scope="project", need=0.90, risk_tolerance=0.35, abstention_score=0.04),
+        top_k=top_k,
+    )
+    domain, scenario, _ = name.split(":", 2)
+    if scenario == "clean_control":
+        passed = result.gated.risky_selected == 0 and result.helpful_items_lost <= 0 and result.utility_gain >= -0.25
+    else:
+        passed = result.utility_gain > 0 and (result.risky_items_prevented > 0 or result.stale_items_prevented > 0)
+    return StressSummary(
+        case_id=name,
+        domain=domain,
+        scenario=scenario,
+        ordinary_net=result.ordinary.net_utility(),
+        gated_net=result.gated.net_utility(),
+        utility_gain=result.utility_gain,
+        risky_prevented=result.risky_items_prevented,
+        stale_prevented=result.stale_items_prevented,
+        helpful_lost=result.helpful_items_lost,
+        ordinary_risky=result.ordinary.risky_selected,
+        gated_risky=result.gated.risky_selected,
+        ordinary_stale=result.ordinary.stale_selected,
+        gated_stale=result.gated.stale_selected,
+        pass_fail="PASS" if passed else "WEAK",
+    )
+
+
+def write_outputs(out_csv: Path, out_json: Path, rows: list[StressSummary]) -> None:
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    with out_csv.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(asdict(rows[0]).keys()))
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(asdict(row))
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    out_json.write_text(json.dumps([asdict(row) for row in rows], indent=2), encoding="utf-8")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run an offline multi-domain Persistence Gate stress benchmark.")
+    parser.add_argument("--cases-per-scenario", type=int, default=20)
+    parser.add_argument("--top-k", type=int, default=4)
+    parser.add_argument("--seed", type=int, default=20260611)
+    parser.add_argument("--out", type=Path, default=Path("benchmark_results/multi_domain_stress_summary.csv"))
+    parser.add_argument("--json", type=Path, default=Path("benchmark_results/multi_domain_stress_summary.json"))
+    args = parser.parse_args()
+
+    rng = random.Random(args.seed)
+    rows: list[StressSummary] = []
+    case_num = 0
+    for domain in DOMAINS:
+        for scenario in SCENARIOS:
+            for _ in range(args.cases_per_scenario):
+                case_num += 1
+                name, query, memories = build_case(case_num, domain, scenario, rng)
+                rows.append(run_stress_case(name, query, memories, top_k=args.top_k))
+
+    passed = sum(1 for row in rows if row.pass_fail == "PASS")
+    mean_gain = sum(row.utility_gain for row in rows) / len(rows)
+    print("Offline Multi-Domain Stress Benchmark")
+    print("====================================")
+    print(f"Cases: {len(rows)}")
+    print(f"Passed: {passed}/{len(rows)}")
+    print(f"Pass rate: {passed / len(rows):.1%}")
+    print(f"Mean utility gain: {mean_gain:.2f}")
+
+    for domain in DOMAINS:
+        domain_rows = [row for row in rows if row.domain == domain]
+        domain_passed = sum(1 for row in domain_rows if row.pass_fail == "PASS")
+        domain_gain = sum(row.utility_gain for row in domain_rows) / len(domain_rows)
+        print(f"{domain}: {domain_passed}/{len(domain_rows)} pass, mean_gain={domain_gain:.2f}")
+
+    write_outputs(args.out, args.json, rows)
+    print(f"Saved CSV: {args.out}")
+    print(f"Saved JSON: {args.json}")
+
+
+if __name__ == "__main__":
+    main()
