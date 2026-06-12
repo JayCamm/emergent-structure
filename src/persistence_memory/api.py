@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .controller import GateReport, MemoryController
-from .models import MemoryItem, ScoredMemory, TaskContext
+from .models import EvidenceRole, MemoryItem, QueryIntent, ScoredMemory, TaskContext
 from .profiles import GateProfile
 from .scorer import PersistenceScorer
 from .store import InMemoryStore
@@ -86,6 +86,7 @@ class PersistenceGate:
         need: float = 0.90,
         risk_tolerance: float = 0.35,
         abstention_score: float = 0.04,
+        query_intent: str | QueryIntent = QueryIntent.GENERAL_LOOKUP,
     ) -> None:
         self.profile = profile
         self.top_k = top_k
@@ -93,6 +94,7 @@ class PersistenceGate:
         self.need = need
         self.risk_tolerance = risk_tolerance
         self.abstention_score = abstention_score
+        self.query_intent = self._coerce_query_intent(query_intent)
 
     def filter(
         self,
@@ -105,11 +107,14 @@ class PersistenceGate:
         need: float | None = None,
         risk_tolerance: float | None = None,
         abstention_score: float | None = None,
+        query_intent: str | QueryIntent | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> GateFilterResult:
         active_profile = profile if profile is not None else self.profile
         active_top_k = top_k if top_k is not None else self.top_k
         active_context_scope = context_scope if context_scope is not None else self.context_scope
+        active_metadata = dict(metadata or {})
+        active_query_intent = self._coerce_query_intent(query_intent if query_intent is not None else active_metadata.get("query_intent", self.query_intent))
 
         items = [self._coerce_item(item, default_context_scope=active_context_scope) for item in retrieved_items]
         task = TaskContext(
@@ -118,7 +123,8 @@ class PersistenceGate:
             need=self.need if need is None else need,
             risk_tolerance=self.risk_tolerance if risk_tolerance is None else risk_tolerance,
             abstention_score=self.abstention_score if abstention_score is None else abstention_score,
-            metadata=metadata or {},
+            query_intent=active_query_intent,
+            metadata=active_metadata,
         )
 
         controller = MemoryController(InMemoryStore(items), scorer=PersistenceScorer(profile=active_profile))
@@ -140,15 +146,26 @@ class PersistenceGate:
             raise ValueError("Retrieved item dict must include a 'text' field")
 
         metadata = dict(item.get("metadata") or {})
-        for key in ["label_helpful", "label_risky", "label_stale", "label_uncertain", "label_confidence"]:
+        for key in [
+            "label_helpful",
+            "label_risky",
+            "label_stale",
+            "label_uncertain",
+            "label_confidence",
+            "evidence_role",
+            "influence_role",
+        ]:
             if key in item and key not in metadata:
                 metadata[key] = item[key]
+
+        evidence_role = self._coerce_evidence_role(item.get("evidence_role") or item.get("influence_role") or metadata.get("evidence_role") or metadata.get("influence_role"))
 
         return MemoryItem(
             id=str(item.get("id") or item.get("source") or abs(hash(item["text"]))),
             text=str(item["text"]),
             source=str(item.get("source") or "retrieved"),
             context_scope=str(item.get("context_scope") or default_context_scope),
+            evidence_role=evidence_role,
             relevance=float(item.get("relevance", 0.0)),
             confidence=float(item.get("confidence", 0.5)),
             importance=float(item.get("importance", 0.5)),
@@ -158,6 +175,26 @@ class PersistenceGate:
             harm_score=float(item.get("harm_score", item.get("harm", 0.0))),
             metadata=metadata,
         )
+
+    def _coerce_evidence_role(self, value: Any) -> EvidenceRole:
+        if isinstance(value, EvidenceRole):
+            return value
+        if value is None:
+            return EvidenceRole.UNCERTAIN
+        try:
+            return EvidenceRole(str(value))
+        except ValueError:
+            return EvidenceRole.UNCERTAIN
+
+    def _coerce_query_intent(self, value: Any) -> QueryIntent:
+        if isinstance(value, QueryIntent):
+            return value
+        if value is None:
+            return QueryIntent.GENERAL_LOOKUP
+        try:
+            return QueryIntent(str(value))
+        except ValueError:
+            return QueryIntent.GENERAL_LOOKUP
 
     def _audit_log(self, report: GateReport) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -180,6 +217,7 @@ class PersistenceGate:
                         "harm_score": item.harm_score,
                         "burden": item.burden,
                         "usefulness_score": item.usefulness_score,
+                        "evidence_role": item.evidence_role.value,
                         "state": item.state.value,
                         "text_preview": item.text[:160],
                     }
