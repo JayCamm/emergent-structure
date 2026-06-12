@@ -21,6 +21,9 @@ class GateProfile:
     risk_weight: float
     high_risk_block_threshold: float | None = None
     high_harm_block_threshold: float | None = None
+    gray_zone_harm_threshold: float | None = None
+    gray_zone_risk_threshold: float | None = None
+    gray_zone_usefulness_ceiling: float | None = None
 
 
 PROFILES: dict[str, GateProfile] = {
@@ -35,6 +38,9 @@ PROFILES: dict[str, GateProfile] = {
         risk_weight=0.22,
         high_risk_block_threshold=None,
         high_harm_block_threshold=None,
+        gray_zone_harm_threshold=None,
+        gray_zone_risk_threshold=None,
+        gray_zone_usefulness_ceiling=None,
     ),
     "balanced": GateProfile(
         name="balanced",
@@ -47,6 +53,9 @@ PROFILES: dict[str, GateProfile] = {
         risk_weight=0.28,
         high_risk_block_threshold=None,
         high_harm_block_threshold=0.85,
+        gray_zone_harm_threshold=0.38,
+        gray_zone_risk_threshold=0.12,
+        gray_zone_usefulness_ceiling=0.55,
     ),
     "conservative": GateProfile(
         name="conservative",
@@ -59,6 +68,9 @@ PROFILES: dict[str, GateProfile] = {
         risk_weight=0.42,
         high_risk_block_threshold=0.80,
         high_harm_block_threshold=0.70,
+        gray_zone_harm_threshold=0.32,
+        gray_zone_risk_threshold=0.10,
+        gray_zone_usefulness_ceiling=0.65,
     ),
 }
 
