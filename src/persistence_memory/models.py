@@ -24,6 +24,31 @@ class GateDecision(str, Enum):
     ABSTAIN = "abstain"
 
 
+class EvidenceRole(str, Enum):
+    """Role a retrieved item plays in an answer context.
+
+    This separates a document's general usefulness from what kind of influence it
+    should have for a specific task.
+    """
+
+    CURRENT_GUIDANCE = "current_guidance"
+    LEGACY_INSTRUCTION = "legacy_instruction"
+    WARNING_AGAINST_LEGACY = "warning_against_legacy"
+    HISTORICAL_CONTEXT = "historical_context"
+    AUDIT_BACKGROUND = "audit_background"
+    UNCERTAIN = "uncertain"
+
+
+class QueryIntent(str, Enum):
+    """Task intent used for role-aware gating."""
+
+    CURRENT_ACTION = "current_action"
+    HISTORY_COMPARISON = "history_comparison"
+    AUDIT_REVIEW = "audit_review"
+    TRAINING_BACKGROUND = "training_background"
+    GENERAL_LOOKUP = "general_lookup"
+
+
 @dataclass
 class MemoryItem:
     id: str
@@ -34,6 +59,7 @@ class MemoryItem:
     last_used_at: float | None = None
     valid_until: float | None = None
     state: MemoryState = MemoryState.ACTIVE
+    evidence_role: EvidenceRole = EvidenceRole.UNCERTAIN
 
     relevance: float = 0.0
     confidence: float = 0.5
@@ -59,6 +85,7 @@ class TaskContext:
     need: float = 0.5
     risk_tolerance: float = 0.5
     abstention_score: float = 0.0
+    query_intent: QueryIntent = QueryIntent.GENERAL_LOOKUP
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
