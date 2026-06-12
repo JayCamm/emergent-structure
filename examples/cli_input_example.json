@@ -1,0 +1,35 @@
+{
+  "query": "What should guide the current process now?",
+  "profile": "conservative",
+  "top_k": 3,
+  "query_intent": "current_action",
+  "retrieved_items": [
+    {
+      "id": "legacy_high_usefulness",
+      "text": "Legacy instruction: use the old shortcut procedure.",
+      "relevance": 1.0,
+      "risk": 0.70,
+      "harm_score": 0.45,
+      "usefulness_score": 0.95,
+      "evidence_role": "legacy_instruction"
+    },
+    {
+      "id": "current_guidance",
+      "text": "Current guidance: use the approved current process.",
+      "relevance": 0.82,
+      "risk": 0.03,
+      "harm_score": 0.0,
+      "usefulness_score": 0.85,
+      "evidence_role": "current_guidance"
+    },
+    {
+      "id": "warning_doc",
+      "text": "Current warning memo: do not use the old unsafe shortcut. Use the approved process.",
+      "relevance": 0.90,
+      "risk": 0.55,
+      "harm_score": 0.0,
+      "usefulness_score": 0.90,
+      "evidence_role": "warning_against_legacy"
+    }
+  ]
+}
