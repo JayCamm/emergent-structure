@@ -1,11 +1,14 @@
 [project]
 name = "persistence-memory"
-version = "0.1.0"
-description = "Persistence-aware memory controller for influence-gated retrieval"
+version = "0.2.0"
+description = "Persistence-aware evidence admission middleware for influence-gated retrieval"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "JayCamm" }]
 dependencies = []
+
+[project.scripts]
+persistence-gate = "persistence_memory.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
